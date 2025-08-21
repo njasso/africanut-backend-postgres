@@ -1,0 +1,320 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  VIEWER
+}
+
+enum EntryType {
+  PRODUCT
+  EXPENSE
+}
+
+model User {
+  id                String            @id @default(uuid())
+  email             String            @unique
+  password          String
+  name              String
+  role              Role              @default(VIEWER)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  accountingEntries AccountingEntry[] @relation("UserEntries")
+  documents         Document[]        @relation("UserDocuments")
+  orders            Order[]
+}
+
+model Company {
+  id                String            @id @default(uuid())
+  slug              String            @unique
+  name              String
+  sector            String
+  tagline           String?
+  description       String?
+  shopUrl           String?
+
+  // Relations
+  projects          Project[]
+  employees         Employee[]
+  accountingEntries AccountingEntry[]
+  metrics           Metric[]
+  orders            Order[]
+  documents         Document[]
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model Employee {
+  id            String    @id @default(uuid())
+  name          String
+  role          String
+  email         String?   @unique
+  date_of_birth DateTime?
+  nationality   String?
+  contract_type String?
+  phone         String?
+  address       String?
+  salary        Float?
+  photo_url     String?
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  title     String
+  status    String   @default("En cours")
+  budget    Float?
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AccountingEntry {
+  id              String      @id @default(uuid())
+  label           String
+  type            EntryType
+  amount          Float
+  journalCode     String?     
+  reference       String?     
+  debitAccount    String?     
+  creditAccount   String?     
+  documentType    String?     
+  documentNumber  String?     
+  documentDate    DateTime?   
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  createdBy       User?       @relation("UserEntries", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById     String?
+  documents       Document[]  
+  date            DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+}
+
+
+model Metric {
+  id           String   @id @default(uuid())
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId    String
+  lot          String
+  biomassKg    Float
+  feedKg       Float
+  productionKg Float
+  mortalities  Int?
+  fcr          Float?
+  note         String?
+  date         DateTime @default(now())
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  orderNumber     String      @unique @default(uuid())
+  status          String      @default("pending")
+  totalAmount     Float
+  paymentStatus   String      @default("unpaid")
+  shippingAddress String
+  
+  // Relations
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  user            User?       @relation(fields: [userId], references: [id])
+  userId          String?
+
+  // Articles de la commande (relation one-to-many)
+  items           OrderItem[]
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id                 String  @id @default(uuid())
+  quantity           Int
+  priceAtPurchase    Float
+
+  // Relations
+  order              Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId            String
+  product            Product @relation(fields: [productId], references: [id])
+  productId          String
+  stockMovements     StockMovement[] // ✅ Ajouté : La relation inverse vers StockMovement
+
+  @@map("order_items")
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Product {
+  id              String          @id @default(uuid())
+  name            String
+  description     String?
+  price           Float
+  photos          String[]
+  characteristics Json
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  stock_quantity  Int             @default(0)
+
+  // Nouvelle relation inverse vers OrderItem
+  orderItems      OrderItem[]
+
+  category        Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId      String
+  movements       StockMovement[]
+
+  @@map("products")
+}
+
+model Webinar {
+  id            Int      @id @default(autoincrement())
+  title         String
+  description   String
+  videoUrl      String
+  coverImageUrl String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+model LivreBlanc {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  imageUrl    String?
+  fileUrl     String
+  category    String[] // Le champ est maintenant un tableau de chaînes de caractères
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Brochure {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  imageUrl    String?
+  fileUrl     String
+  language    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Communique {
+  id          Int      @id @default(autoincrement())
+  title       String
+  content     String
+  date        DateTime
+  fileUrl     String?
+  isImportant Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Media {
+  id           Int      @id @default(autoincrement())
+  title        String
+  description  String?
+  type         String   // 'image', 'video', 'document'
+  url          String
+  thumbnailUrl String?
+  category     String[] // Le champ est maintenant un tableau de chaînes de caractères non optionnel
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model App {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  platform    String
+  downloadUrl String
+  iconUrl     String?
+  category    String[] // Le champ est maintenant un tableau de chaînes de caractères non optionnel
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InfoKit {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  fileUrl     String
+  imageUrl    String?
+  language    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Article {
+  id          Int       @id @default(autoincrement())
+  title       String
+  slug        String    @unique
+  content     String
+  excerpt     String?
+  authorName  String
+  categories  String[]
+  tags        String[]
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Document {
+  id                String          @id @default(uuid())
+  label             String
+  path              String
+  mimeType          String
+  size              Int
+  documentType      String?
+  documentNumber    String?
+  documentDate      DateTime?
+
+  // 🔗 Relations
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId         String
+
+  uploadedBy        User?           @relation("UserDocuments", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedById      String?
+
+  accountingEntry   AccountingEntry? @relation(fields: [accountingEntryId], references: [id])
+  accountingEntryId String?
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+}
+
+model StockMovement {
+  id           String     @id @default(uuid())
+  type         String     // "entry" ou "exit"
+  quantity     Int
+  movementDate DateTime   @default(now())
+
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  
+  orderItem    OrderItem? @relation(fields: [orderItemId], references: [id])
+  orderItemId  String?    @unique // ✅ Ajouté : Le champ doit être unique pour une relation 1-à-1
+
+  @@map("stock_movements")
+}
