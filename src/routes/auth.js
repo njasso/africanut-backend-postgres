@@ -1,4 +1,3 @@
-// backend/routes/auth.js
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -8,6 +7,9 @@ import { requireAuth } from '../middleware/auth.js';
 const prisma = new PrismaClient();
 const router = Router();
 
+// -----------------------------
+// Inscription
+// -----------------------------
 router.post('/register', async (req, res) => {
   const { email, password, name, role } = req.body;
 
@@ -38,6 +40,9 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// -----------------------------
+// Connexion
+// -----------------------------
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -77,6 +82,9 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// -----------------------------
+// Vérifier l'utilisateur connecté
+// -----------------------------
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
