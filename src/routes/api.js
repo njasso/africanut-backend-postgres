@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:5005/api';
+const API_URL = 'africanut-backend-postgres-production.up.railway.app';
 
 export const api = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`;
