@@ -37,8 +37,8 @@ const app = express();
 // ✅ Configuration CORS
 // -----------------------------
 const allowedOrigins = [
-  "http://localhost:5173", // Dév local (Vite)
-  "https://africanutindustrygroupplateform.netlify.app" // Frontend en prod
+  "http://localhost:5173",
+  "https://africanutindustryplatform.netlify.app"
 ];
 
 app.use(cors({
