@@ -1,13 +1,9 @@
-// backend/index.js
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { PrismaClient } from '@prisma/client';
-import fetch from 'node-fetch';
-
-// Routes
+import pkg from '@prisma/client';
 import authRoutes from './routes/auth.js';
 import companyRoutes from './routes/companies.js';
 import employeeRoutes from './routes/employees.js';
@@ -27,135 +23,85 @@ import communiquesRouter from './routes/communiques.js';
 import mediathequeRouter from './routes/mediatheque.js';
 import appsRouter from './routes/apps.js';
 import infoKitsRouter from './routes/info-kits.js';
-import ordersRouter from './routes/orders.js';
-import { requireAuth } from './middleware/auth.js';
+import ordersRouter from './routes/orders.js'; 
+import { requireAuth, requireRole } from './middleware/auth.js';
+import fetch from 'node-fetch';
 
+const { PrismaClient, Role } = pkg;
 const prisma = new PrismaClient();
 const app = express();
-const PORT = process.env.PORT || 5005;
 
-// -----------------------------
-// Debug Middleware (login JSON)
-// -----------------------------
-app.use((req, res, next) => {
-  if (req.url.includes('/api/auth/login')) {
-    console.log(`\n🔍 [DEBUG LOGIN] ${req.method} ${req.url}`);
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+// Middlewares généraux
+app.use(cors());
+app.use(helmet());
+app.use(express.json());
+app.use(morgan('dev'));
 
-    let rawBody = '';
-    req.on('data', (chunk) => (rawBody += chunk.toString()));
-    req.on('end', () => {
-      console.log('Raw body:', rawBody);
-      try {
-        console.log('Parsed JSON:', JSON.parse(rawBody));
-      } catch (err) {
-        console.error('JSON parse error:', err.message);
-      }
-    });
-  }
-  next();
-});
-
-// -----------------------------
-// Middleware & Security
-// -----------------------------
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'https://africanutindustryplatform.netlify.app',
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-}));
-
-app.use(helmet({ crossOriginResourcePolicy: false, contentSecurityPolicy: false }));
-app.use(express.json({ limit: '10mb', strict: true }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
-app.use(morgan('combined'));
-
-// -----------------------------
-// Raw body parser for auth debugging
-// -----------------------------
-app.use('/api/auth', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
-  if (req.body && req.body.length > 0) {
-    try {
-      req.body = JSON.parse(req.body.toString('utf8'));
-    } catch (err) {
-      return res.status(400).json({
-        error: 'Invalid JSON format',
-        details: err.message,
-        receivedData: req.body.toString('utf8'),
-      });
-    }
-  }
-  next();
-});
-
-// -----------------------------
-// Health & Test Endpoints
-// -----------------------------
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
-    port: PORT,
-    hasJwtSecret: !!process.env.JWT_SECRET,
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
-  });
-});
-
-app.post('/api/test-json', (req, res) => {
-  console.log('🧪 Test JSON body:', req.body);
-  res.json({ received: req.body, type: typeof req.body, success: true });
-});
-
-// -----------------------------
-// DeepSeek Analyze Route
-// -----------------------------
+// ----------------------------------------------------------------
+// NOUVEAU ROUTER POUR L'ANALYSE IA
+// ----------------------------------------------------------------
+// Cet endpoint gère la requête proxy vers l'API DeepSeek.
 app.post('/api/deepseek-analyze', async (req, res) => {
   try {
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (!key) return res.status(500).json({ error: 'Clé API DeepSeek manquante' });
+    const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
+    if (!deepseekApiKey) {
+      return res.status(500).json({ error: 'Clé API DeepSeek manquante' });
+    }
 
+    // Récupérer les données envoyées par votre frontend
     const { accountingData, monthlyData, totalPnl, balanceSheet } = req.body;
-    const prompt = `Effectuez une analyse financière basée sur :
-- Données comptables : ${JSON.stringify(accountingData)}
-- Données mensuelles : ${JSON.stringify(monthlyData)}
-- Compte de résultat : ${JSON.stringify(totalPnl)}
-- Bilan : ${JSON.stringify(balanceSheet)}
 
-Format de sortie JSON :
-{
-  "anomalies": [{ "type": "string", "message": "string", "severity": "string", "suggestions": ["string"] }],
-  "profitabilityAnalysis": { "trend": "number", "status": "string", "message": "string" },
-  "recommendations": [{ "type": "string", "message": "string", "suggestion": "string" }]
-}`;
+    // Étape cruciale : Construire le prompt avec les données
+    const analysisPrompt = `Effectuez une analyse financière de cette entreprise basée sur les données suivantes :
+    - Données comptables brutes : ${JSON.stringify(accountingData)}
+    - Données mensuelles (évolution) : ${JSON.stringify(monthlyData)}
+    - Compte de résultat (P&L) : ${JSON.stringify(totalPnl)}
+    - Bilan : ${JSON.stringify(balanceSheet)}
+    
+    Fournissez une analyse complète incluant la détection d'anomalies, une analyse de la profitabilité et des recommandations concrètes. Le format de sortie doit être un objet JSON avec les champs suivants :
+    {
+      "anomalies": [{ "type": "string", "message": "string", "severity": "string", "suggestions": ["string"] }],
+      "profitabilityAnalysis": { "trend": "number", "status": "string", "message": "string" },
+      "recommendations": [{ "type": "string", "message": "string", "suggestion": "string" }]
+    }`;
+
+    // Étape cruciale : Construire le corps de la requête DeepSeek au format correct
+    const deepSeekBody = {
+      model: "deepseek-chat",
+      messages: [
+        {
+          role: "user",
+          content: analysisPrompt
+        }
+      ],
+      stream: false
+    };
 
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], stream: false }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${deepseekApiKey}`
+      },
+      body: JSON.stringify(deepSeekBody)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Erreur DeepSeek: ${response.status} - ${errorText}`);
+      throw new Error(`Erreur API DeepSeek: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
     res.json(data);
-  } catch (err) {
-    console.error('Erreur DeepSeek:', err);
-    res.status(500).json({ error: 'Échec communication API DeepSeek', details: err.message });
+  } catch (error) {
+    console.error('Erreur lors du relais de la requête vers DeepSeek:', error);
+    res.status(500).json({ error: 'Échec de la communication avec l\'API DeepSeek', details: error.message });
   }
 });
 
-// -----------------------------
-// Main Routes
-// -----------------------------
+// ----------------------------------------------------------------
+
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/store', storeRoutes);
@@ -172,58 +118,20 @@ app.use('/api/apps', appsRouter);
 app.use('/api/info-kits', infoKitsRouter);
 app.use('/api/orders', ordersRouter);
 
-// Protected Routes
+// Routes protégées par l'authentification
 app.use('/api/employees', requireAuth, employeeRoutes);
 app.use('/api/accounting', requireAuth, accountingRoutes);
 app.use('/api/projects', requireAuth, projectRoutes);
 app.use('/api/metrics', requireAuth, metricRoutes);
 app.use('/api/reports', requireAuth, reportRoutes);
 
-// -----------------------------
-// Error Handling
-// -----------------------------
-app.use((err, req, res, next) => {
-  console.error('\n❌ ERROR HANDLER', err);
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({ error: 'Invalid JSON format', message: err.message });
-  }
-  res.status(err.status || 500).json({
-    error: 'Erreur serveur',
-    details: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
-    type: err.constructor.name,
-  });
-});
+const PORT = process.env.PORT || 5005;
 
-// 404 Handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    method: req.method,
-    url: req.originalUrl,
-    availableRoutes: [
-      'GET /api/health',
-      'POST /api/test-json',
-      'POST /api/auth/login',
-      'POST /api/auth/register',
-      'GET /api/auth/me',
-    ],
-  });
-});
-
-// -----------------------------
-// Start Server & DB Init
-// -----------------------------
 const startServer = async () => {
   try {
-    console.log('🔍 Environment:', { NODE_ENV: process.env.NODE_ENV, PORT, JWT_SECRET: !!process.env.JWT_SECRET, DATABASE_URL: !!process.env.DATABASE_URL });
-    await prisma.$connect();
-    console.log('✅ Database connected');
-
-    const userCount = await prisma.user.count();
-    console.log(`📊 Users in DB: ${userCount}`);
-
-    const companyCount = await prisma.company.count();
-    if (companyCount === 0) {
+    // Seed initial companies si nécessaire
+    const count = await prisma.company.count();
+    if (count === 0) {
       await prisma.company.createMany({
         data: [
           { slug: 'africanut-fish-market', name: 'AFRICANUT FISH MARKET', sector: 'Aquaculture', tagline: 'Production piscicole & services' },
@@ -232,17 +140,15 @@ const startServer = async () => {
           { slug: 'africanut-media', name: 'AFRICANUT MEDIA', sector: 'Média & Communication', tagline: 'Contenus du groupe' },
         ],
       });
-      console.log('✅ Initial companies inserted');
+      console.log('Seeded base companies');
     }
 
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running at http://localhost:${PORT}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`🧪 Test JSON: http://localhost:${PORT}/api/test-json`);
-      console.log(`🔑 Login: http://localhost:${PORT}/api/auth/login`);
+    // Démarrage du serveur
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`API running on http://localhost:${PORT}`);
     });
   } catch (err) {
-    console.error('❌ Server startup failed:', err);
+    console.error('Failed to start server:', err);
     process.exit(1);
   }
 };
