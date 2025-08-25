@@ -32,9 +32,8 @@ const prisma = new PrismaClient();
 const app = express();
 
 // ----------------------
-// ✅ CORS : Netlify + Dev + Railway
+// ✅ Configuration CORS
 // ----------------------
-/ ✅ Configuration CORS
 const allowedOrigins = [
   "https://africanutindustryplatform.netlify.app", // ton frontend en prod
   "http://localhost:5173", // pour tes tests locaux
@@ -53,20 +52,8 @@ const corsOptions = {
   credentials: true,
 };
 
-pp.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    allowedHeaders: ["Authorization", "Content-Type"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  })
-);
+app.use(cors(corsOptions));
+
 // ----------------------
 // Middlewares généraux
 // ----------------------
@@ -102,15 +89,6 @@ app.use('/api/projects', requireAuth, projectRoutes);
 app.use('/api/metrics', requireAuth, metricRoutes);
 app.use('/api/reports', requireAuth, reportRoutes);
 
-app.use((req, res, next) => {
-  res.header(
-    "Access-Control-Allow-Origin",
-    "https://africanutindustryplatform.netlify.app"
-  );
-  res.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  next();
-});
 // ----------------------------------------------------------------
 // Exemple d’endpoint IA
 // ----------------------------------------------------------------
@@ -196,7 +174,14 @@ const startServer = async () => {
       console.log('Seeded companies');
     }
 
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () =>
-  console.log(`✅ Server running on port ${PORT} (Railway ready)`)
-);
+    app.listen(PORT, () =>
+      console.log(`✅ Server running on port ${PORT} (Railway ready)`)
+    );
+
+  } catch (error) {
+    console.error('Failed to start the server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
