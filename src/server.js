@@ -32,20 +32,35 @@ const prisma = new PrismaClient();
 const app = express();
 
 // ----------------------
-// CORS pour Netlify
+// ✅ CORS : Netlify + Dev + Railway
 // ----------------------
-const corsOptions = {
-  origin: 'https://africanutindustryplatform.netlify.app',
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
-  credentials: true
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // préflight
+const allowedOrigins = [
+  'https://africanutindustryplatform.netlify.app',
+  'https://africanut-backend-production.up.railway.app',
+  'http://localhost:5173', // pour dev frontend vite
+];
 
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Préflight global
+
+// ----------------------
 // Middlewares généraux
+// ----------------------
 app.use(helmet());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' })); // sécurité sur taille payload
 app.use(morgan('dev'));
 
 // ----------------------------------------------------------------
@@ -79,39 +94,44 @@ app.use('/api/reports', requireAuth, reportRoutes);
 // ----------------------------------------------------------------
 // Exemple d’endpoint IA
 // ----------------------------------------------------------------
-app.post('/api/deepseek-analyze', async (req,res)=>{
-  try{
+app.post('/api/deepseek-analyze', async (req, res) => {
+  try {
     const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
-    if(!deepseekApiKey) return res.status(500).json({error:'Clé API DeepSeek manquante'});
+    if (!deepseekApiKey) return res.status(500).json({ error: 'Clé API DeepSeek manquante' });
 
-    const {accountingData, monthlyData, totalPnl, balanceSheet} = req.body;
-    const analysisPrompt = `Effectuez une analyse financière avec ces données : ${JSON.stringify({accountingData, monthlyData, totalPnl, balanceSheet})}. Retournez un JSON structuré.`;
+    const { accountingData, monthlyData, totalPnl, balanceSheet } = req.body;
+    const analysisPrompt = `Effectuez une analyse financière avec ces données : ${JSON.stringify({
+      accountingData,
+      monthlyData,
+      totalPnl,
+      balanceSheet,
+    })}. Retournez un JSON structuré.`;
 
     const deepSeekBody = {
-      model:"deepseek-chat",
-      messages:[{role:"user", content:analysisPrompt}],
-      stream:false
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: analysisPrompt }],
+      stream: false,
     };
 
-    const response = await fetch('https://api.deepseek.com/chat/completions',{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Authorization':`Bearer ${deepseekApiKey}`
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${deepseekApiKey}`,
       },
-      body:JSON.stringify(deepSeekBody)
+      body: JSON.stringify(deepSeekBody),
     });
 
-    if(!response.ok){
+    if (!response.ok) {
       const text = await response.text();
       throw new Error(`DeepSeek API error ${response.status}: ${text}`);
     }
 
     const data = await response.json();
     res.json(data);
-  }catch(err){
+  } catch (err) {
     console.error(err);
-    res.status(500).json({error:'Erreur DeepSeek', details:err.message});
+    res.status(500).json({ error: 'Erreur DeepSeek', details: err.message });
   }
 });
 
@@ -120,25 +140,47 @@ app.post('/api/deepseek-analyze', async (req,res)=>{
 // ----------------------------------------------------------------
 const PORT = process.env.PORT || 5005;
 
-const startServer = async ()=>{
-  try{
-    // Seed companies si vide
+const startServer = async () => {
+  try {
+    // ✅ Seed companies si vide
     const count = await prisma.company.count();
-    if(count===0){
+    if (count === 0) {
       await prisma.company.createMany({
-        data:[
-          {slug:'africanut-fish-market', name:'AFRICANUT FISH MARKET', sector:'Aquaculture', tagline:'Production piscicole & services'},
-          {slug:'magaton-provender', name:'MAGATON PROVENDER', sector:'Agro-industrie', tagline:'Aliments & intrants'},
-          {slug:'nouvelle-academie-numerique-africaine', name:'NOUVELLE ACADEMIE NUMERIQUE AFRICAINE', sector:'Education & Numérique', tagline:'Formation & digital'},
-          {slug:'africanut-media', name:'AFRICANUT MEDIA', sector:'Média & Communication', tagline:'Contenus du groupe'}
-        ]
+        data: [
+          {
+            slug: 'africanut-fish-market',
+            name: 'AFRICANUT FISH MARKET',
+            sector: 'Aquaculture',
+            tagline: 'Production piscicole & services',
+          },
+          {
+            slug: 'magaton-provender',
+            name: 'MAGATON PROVENDER',
+            sector: 'Agro-industrie',
+            tagline: 'Aliments & intrants',
+          },
+          {
+            slug: 'nouvelle-academie-numerique-africaine',
+            name: 'NOUVELLE ACADEMIE NUMERIQUE AFRICAINE',
+            sector: 'Education & Numérique',
+            tagline: 'Formation & digital',
+          },
+          {
+            slug: 'africanut-media',
+            name: 'AFRICANUT MEDIA',
+            sector: 'Média & Communication',
+            tagline: 'Contenus du groupe',
+          },
+        ],
       });
       console.log('Seeded companies');
     }
 
-    app.listen(PORT,'0.0.0.0',()=>console.log(`Server running on port ${PORT}`));
-  }catch(err){
-    console.error('Failed to start server:', err);
+    app.listen(PORT, '0.0.0.0', () =>
+      console.log(`✅ Server running on port ${PORT}`)
+    );
+  } catch (err) {
+    console.error('❌ Failed to start server:', err);
     process.exit(1);
   }
 };
