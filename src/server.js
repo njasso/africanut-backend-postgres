@@ -32,109 +32,70 @@ import { requireAuth } from './middleware/auth.js';
 
 const prisma = new PrismaClient();
 const app = express();
+const PORT = process.env.PORT || 5005;
 
-// Debug middleware - TEMPORARY for debugging the JSON issue
-const debugMiddleware = (req, res, next) => {
+// -----------------------------
+// Debug Middleware (login JSON)
+// -----------------------------
+app.use((req, res, next) => {
   if (req.url.includes('/api/auth/login')) {
-    console.log('\n🔍 === AUTH LOGIN DEBUG ===');
-    console.log('Method:', req.method);
-    console.log('URL:', req.url);
-    console.log('Content-Type:', req.get('Content-Type'));
+    console.log(`\n🔍 [DEBUG LOGIN] ${req.method} ${req.url}`);
     console.log('Headers:', JSON.stringify(req.headers, null, 2));
-    
-    // Capture raw body
+
     let rawBody = '';
-    req.on('data', chunk => {
-      rawBody += chunk.toString();
-      console.log('Raw body chunk:', chunk.toString());
-    });
-    
+    req.on('data', (chunk) => (rawBody += chunk.toString()));
     req.on('end', () => {
-      console.log('Complete raw body:', rawBody);
-      console.log('Raw body length:', rawBody.length);
-      console.log('Raw body bytes:', Buffer.from(rawBody).toJSON());
+      console.log('Raw body:', rawBody);
       try {
-        const parsed = JSON.parse(rawBody);
-        console.log('Successfully parsed JSON:', parsed);
-      } catch (parseError) {
-        console.error('JSON parse error in middleware:', parseError.message);
-        console.error('Problematic character at position:', parseError.message.match(/position (\d+)/)?.[1]);
+        console.log('Parsed JSON:', JSON.parse(rawBody));
+      } catch (err) {
+        console.error('JSON parse error:', err.message);
       }
     });
-    
-    console.log('=========================\n');
   }
   next();
-};
+});
 
-// Add debug middleware BEFORE body parsing
-app.use(debugMiddleware);
-
-// Configuration CORS - Enhanced
+// -----------------------------
+// Middleware & Security
+// -----------------------------
 app.use(cors({
   origin: [
-    'http://localhost:5173', 
+    'http://localhost:5173',
+    'http://localhost:3000',
     'https://africanutindustryplatform.netlify.app',
-    'http://localhost:3000' // Add this for testing
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'Accept',
-    'Origin',
-    'X-Requested-With'
-  ],
-  preflightContinue: false,
-  optionsSuccessStatus: 200
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
 }));
 
-// Middlewares globaux
-app.use(helmet({ 
-  crossOriginResourcePolicy: false,
-  contentSecurityPolicy: false // Disable for development
-}));
+app.use(helmet({ crossOriginResourcePolicy: false, contentSecurityPolicy: false }));
+app.use(express.json({ limit: '10mb', strict: true }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(morgan('combined'));
 
-// Enhanced body parsing with error handling
-app.use(express.json({ 
-  limit: '10mb',
-  strict: true,
-  type: 'application/json'
-}));
-
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: '10mb' 
-}));
-
-// Add raw body parser for debugging
-app.use('/api/auth', express.raw({ 
-  type: 'application/json',
-  limit: '10mb'
-}), (req, res, next) => {
+// -----------------------------
+// Raw body parser for auth debugging
+// -----------------------------
+app.use('/api/auth', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
   if (req.body && req.body.length > 0) {
     try {
-      const bodyString = req.body.toString('utf8');
-      console.log('🔧 Raw body string:', bodyString);
-      req.body = JSON.parse(bodyString);
-      console.log('🔧 Parsed body:', req.body);
-    } catch (error) {
-      console.error('🔧 Manual JSON parsing failed:', error.message);
-      return res.status(400).json({ 
+      req.body = JSON.parse(req.body.toString('utf8'));
+    } catch (err) {
+      return res.status(400).json({
         error: 'Invalid JSON format',
-        details: error.message,
-        receivedData: req.body.toString('utf8')
+        details: err.message,
+        receivedData: req.body.toString('utf8'),
       });
     }
   }
   next();
 });
 
-// Morgan with custom format for better debugging
-app.use(morgan('combined'));
-
-// Health check endpoint
+// -----------------------------
+// Health & Test Endpoints
+// -----------------------------
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -146,68 +107,55 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Test endpoint for JSON parsing
 app.post('/api/test-json', (req, res) => {
-  console.log('🧪 Test JSON endpoint hit');
-  console.log('Body:', req.body);
-  console.log('Body type:', typeof req.body);
-  res.json({ 
-    received: req.body,
-    type: typeof req.body,
-    success: true 
-  });
+  console.log('🧪 Test JSON body:', req.body);
+  res.json({ received: req.body, type: typeof req.body, success: true });
 });
 
-// Route IA DeepSeek
+// -----------------------------
+// DeepSeek Analyze Route
+// -----------------------------
 app.post('/api/deepseek-analyze', async (req, res) => {
   try {
-    const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
-    if (!deepseekApiKey) {
-      return res.status(500).json({ error: 'Clé API DeepSeek manquante' });
-    }
+    const key = process.env.DEEPSEEK_API_KEY;
+    if (!key) return res.status(500).json({ error: 'Clé API DeepSeek manquante' });
 
     const { accountingData, monthlyData, totalPnl, balanceSheet } = req.body;
+    const prompt = `Effectuez une analyse financière basée sur :
+- Données comptables : ${JSON.stringify(accountingData)}
+- Données mensuelles : ${JSON.stringify(monthlyData)}
+- Compte de résultat : ${JSON.stringify(totalPnl)}
+- Bilan : ${JSON.stringify(balanceSheet)}
 
-    const analysisPrompt = `Effectuez une analyse financière basée sur :
-    - Données comptables : ${JSON.stringify(accountingData)}
-    - Données mensuelles : ${JSON.stringify(monthlyData)}
-    - Compte de résultat : ${JSON.stringify(totalPnl)}
-    - Bilan : ${JSON.stringify(balanceSheet)}
-
-    Format de sortie JSON :
-    {
-      "anomalies": [{ "type": "string", "message": "string", "severity": "string", "suggestions": ["string"] }],
-      "profitabilityAnalysis": { "trend": "number", "status": "string", "message": "string" },
-      "recommendations": [{ "type": "string", "message": "string", "suggestion": "string" }]
-    }`;
+Format de sortie JSON :
+{
+  "anomalies": [{ "type": "string", "message": "string", "severity": "string", "suggestions": ["string"] }],
+  "profitabilityAnalysis": { "trend": "number", "status": "string", "message": "string" },
+  "recommendations": [{ "type": "string", "message": "string", "suggestion": "string" }]
+}`;
 
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${deepseekApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [{ role: 'user', content: analysisPrompt }],
-        stream: false,
-      }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], stream: false }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Erreur API DeepSeek: ${response.status} - ${errorText}`);
+      throw new Error(`Erreur DeepSeek: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
     res.json(data);
-  } catch (error) {
-    console.error('Erreur DeepSeek:', error);
-    res.status(500).json({ error: 'Échec communication API DeepSeek', details: error.message });
+  } catch (err) {
+    console.error('Erreur DeepSeek:', err);
+    res.status(500).json({ error: 'Échec communication API DeepSeek', details: err.message });
   }
 });
 
-// Routes principales
+// -----------------------------
+// Main Routes
+// -----------------------------
 app.use('/api/auth', authRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/store', storeRoutes);
@@ -224,44 +172,30 @@ app.use('/api/apps', appsRouter);
 app.use('/api/info-kits', infoKitsRouter);
 app.use('/api/orders', ordersRouter);
 
-// Routes protégées
+// Protected Routes
 app.use('/api/employees', requireAuth, employeeRoutes);
 app.use('/api/accounting', requireAuth, accountingRoutes);
 app.use('/api/projects', requireAuth, projectRoutes);
 app.use('/api/metrics', requireAuth, metricRoutes);
 app.use('/api/reports', requireAuth, reportRoutes);
 
-// Enhanced error handling middleware
+// -----------------------------
+// Error Handling
+// -----------------------------
 app.use((err, req, res, next) => {
-  console.error('\n❌ === ERROR HANDLER ===');
-  console.error('Error type:', err.constructor.name);
-  console.error('Error message:', err.message);
-  console.error('Error stack:', err.stack);
-  console.error('Request URL:', req.url);
-  console.error('Request method:', req.method);
-  console.error('Request headers:', req.headers);
-  console.error('Request body:', req.body);
-  console.error('=====================\n');
-
-  // Handle specific error types
+  console.error('\n❌ ERROR HANDLER', err);
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({
-      error: 'Invalid JSON format',
-      details: 'The request body contains malformed JSON',
-      message: err.message
-    });
+    return res.status(400).json({ error: 'Invalid JSON format', message: err.message });
   }
-
   res.status(err.status || 500).json({
     error: 'Erreur serveur',
     details: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
-    type: err.constructor.name
+    type: err.constructor.name,
   });
 });
 
-// 404 handler
+// 404 Handler
 app.use('*', (req, res) => {
-  console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
   res.status(404).json({
     error: 'Route not found',
     method: req.method,
@@ -271,34 +205,25 @@ app.use('*', (req, res) => {
       'POST /api/test-json',
       'POST /api/auth/login',
       'POST /api/auth/register',
-      'GET /api/auth/me'
-    ]
+      'GET /api/auth/me',
+    ],
   });
 });
 
-// Lancement serveur
-const PORT = process.env.PORT || 5005;
-
+// -----------------------------
+// Start Server & DB Init
+// -----------------------------
 const startServer = async () => {
   try {
-    // Check environment variables
-    console.log('🔍 Environment check:');
-    console.log('- NODE_ENV:', process.env.NODE_ENV);
-    console.log('- PORT:', PORT);
-    console.log('- JWT_SECRET:', process.env.JWT_SECRET ? '✅ Set' : '❌ Missing');
-    console.log('- DATABASE_URL:', process.env.DATABASE_URL ? '✅ Set' : '❌ Missing');
-
-    // Vérifier la connexion à la base de données
+    console.log('🔍 Environment:', { NODE_ENV: process.env.NODE_ENV, PORT, JWT_SECRET: !!process.env.JWT_SECRET, DATABASE_URL: !!process.env.DATABASE_URL });
     await prisma.$connect();
-    console.log('✅ Connexion à la base de données établie');
+    console.log('✅ Database connected');
 
-    // Test database with a simple query
     const userCount = await prisma.user.count();
-    console.log(`📊 Users in database: ${userCount}`);
+    console.log(`📊 Users in DB: ${userCount}`);
 
-    // Initialiser les données de base
-    const count = await prisma.company.count();
-    if (count === 0) {
+    const companyCount = await prisma.company.count();
+    if (companyCount === 0) {
       await prisma.company.createMany({
         data: [
           { slug: 'africanut-fish-market', name: 'AFRICANUT FISH MARKET', sector: 'Aquaculture', tagline: 'Production piscicole & services' },
@@ -307,17 +232,17 @@ const startServer = async () => {
           { slug: 'africanut-media', name: 'AFRICANUT MEDIA', sector: 'Média & Communication', tagline: 'Contenus du groupe' },
         ],
       });
-      console.log('✅ Données initiales des entreprises insérées');
+      console.log('✅ Initial companies inserted');
     }
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      console.log(`🚀 Server running at http://localhost:${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
       console.log(`🧪 Test JSON: http://localhost:${PORT}/api/test-json`);
-      console.log(`🔑 Login endpoint: http://localhost:${PORT}/api/auth/login`);
+      console.log(`🔑 Login: http://localhost:${PORT}/api/auth/login`);
     });
   } catch (err) {
-    console.error('❌ Échec du démarrage du serveur:', err);
+    console.error('❌ Server startup failed:', err);
     process.exit(1);
   }
 };
