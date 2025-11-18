@@ -3,8 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { Client, Account, Databases, Storage, Query } from 'appwrite';
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
 import authRoutes from './routes/auth.js';
 import companyRoutes from './routes/companies.js';
 import employeeRoutes from './routes/employees.js';
@@ -28,50 +27,16 @@ import ordersRouter from './routes/orders.js';
 import { requireAuth } from './middleware/auth.js';
 import fetch from 'node-fetch';
 
-// ----------------------
-// ✅ Configuration Appwrite
-// ----------------------
-const appwriteClient = new Client()
-  .setEndpoint('https://fra.cloud.appwrite.io/v1')
-  .setProject('6917d60c001a8ea43024');
-
-// Services Appwrite
-export const databases = new Databases(appwriteClient);
-export const storage = new Storage(appwriteClient);
-export const account = new Account(appwriteClient);
-
-// Configuration des bases de données Appwrite
-export const APPWRITE_DATABASES = {
-  MAIN: '6917e2c70008c7f35ac9', // ID de votre database
-  COLLECTIONS: {
-    USERS: 'users',
-    COMPANIES: 'companies',
-    EMPLOYEES: 'employees',
-    PRODUCTS: 'products',
-    ORDERS: 'orders'
-  }
-};
-
-// ----------------------
-// ✅ Configuration Prisma (PostgreSQL Neon)
-// ----------------------
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL
-    }
-  },
-  log: ['query', 'error', 'warn']
-});
-
+const { PrismaClient } = pkg;
+const prisma = new PrismaClient();
 const app = express();
 
 // ----------------------
 // ✅ Configuration CORS
 // ----------------------
 const allowedOrigins = [
-  "https://africanutindustryplatform.netlify.app",
-  "http://localhost:5173",
+  "https://africanutindustryplatform.netlify.app", // ton frontend en prod
+  "http://localhost:5173", // pour tes tests locaux
 ];
 
 const corsOptions = {
@@ -83,7 +48,7 @@ const corsOptions = {
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Appwrite-Project', 'X-Appwrite-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
 
@@ -93,22 +58,8 @@ app.use(cors(corsOptions));
 // Middlewares généraux
 // ----------------------
 app.use(helmet());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '5mb' })); // sécurité sur taille payload
 app.use(morgan('dev'));
-
-// ----------------------
-// Middleware Appwrite (optionnel pour l'authentification)
-// ----------------------
-app.use(async (req, res, next) => {
-  // Vous pouvez utiliser Appwrite pour l'auth ou garder votre système actuel
-  req.appwrite = {
-    databases,
-    storage,
-    account,
-    config: APPWRITE_DATABASES
-  };
-  next();
-});
 
 // ----------------------------------------------------------------
 // Routes publiques
@@ -139,83 +90,7 @@ app.use('/api/metrics', requireAuth, metricRoutes);
 app.use('/api/reports', requireAuth, reportRoutes);
 
 // ----------------------------------------------------------------
-// Routes Appwrite spécifiques
-// ----------------------------------------------------------------
-
-// Test de connexion Appwrite
-app.get('/api/appwrite/health', async (req, res) => {
-  try {
-    // Test de connexion à la database Appwrite
-    const response = await databases.listDocuments(
-      APPWRITE_DATABASES.MAIN,
-      APPWRITE_DATABASES.COLLECTIONS.COMPANIES,
-      [Query.limit(1)]
-    );
-    
-    res.json({ 
-      status: 'OK', 
-      appwrite: 'Connected',
-      database: 'Accessible',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'Error', 
-      appwrite: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Synchronisation des données entre Prisma et Appwrite (optionnel)
-app.post('/api/sync/companies', async (req, res) => {
-  try {
-    const companies = await prisma.company.findMany();
-    
-    const syncResults = [];
-    
-    for (const company of companies) {
-      try {
-        // Vérifier si la company existe déjà dans Appwrite
-        const existingCompanies = await databases.listDocuments(
-          APPWRITE_DATABASES.MAIN,
-          APPWRITE_DATABASES.COLLECTIONS.COMPANIES,
-          [Query.equal('slug', company.slug)]
-        );
-        
-        if (existingCompanies.documents.length === 0) {
-          // Créer dans Appwrite
-          const appwriteCompany = await databases.createDocument(
-            APPWRITE_DATABASES.MAIN,
-            APPWRITE_DATABASES.COLLECTIONS.COMPANIES,
-            'unique()', // Appwrite génère l'ID
-            {
-              slug: company.slug,
-              name: company.name,
-              sector: company.sector,
-              tagline: company.tagline,
-              prismaId: company.id,
-              createdAt: company.createdAt.toISOString(),
-              updatedAt: company.updatedAt.toISOString()
-            }
-          );
-          syncResults.push({ company: company.name, status: 'created', id: appwriteCompany.$id });
-        } else {
-          syncResults.push({ company: company.name, status: 'exists', id: existingCompanies.documents[0].$id });
-        }
-      } catch (error) {
-        syncResults.push({ company: company.name, status: 'error', error: error.message });
-      }
-    }
-    
-    res.json({ syncResults });
-  } catch (error) {
-    res.status(500).json({ error: 'Sync failed', details: error.message });
-  }
-});
-
-// ----------------------------------------------------------------
-// Endpoint DeepSeek (conservé tel quel)
+// Exemple d’endpoint IA
 // ----------------------------------------------------------------
 app.post('/api/deepseek-analyze', async (req, res) => {
   try {
@@ -259,71 +134,13 @@ app.post('/api/deepseek-analyze', async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// Health Check complet
-// ----------------------------------------------------------------
-app.get('/api/health', async (req, res) => {
-  try {
-    // Test Prisma (Neon PostgreSQL)
-    await prisma.$queryRaw`SELECT 1`;
-    const prismaStatus = 'OK';
-    
-    // Test Appwrite
-    let appwriteStatus = 'OK';
-    try {
-      await databases.listDocuments(
-        APPWRITE_DATABASES.MAIN,
-        APPWRITE_DATABASES.COLLECTIONS.COMPANIES,
-        [Query.limit(1)]
-      );
-    } catch (error) {
-      appwriteStatus = `Error: ${error.message}`;
-    }
-    
-    res.json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
-      databases: {
-        prisma: prismaStatus,
-        appwrite: appwriteStatus
-      },
-      environment: process.env.NODE_ENV || 'development'
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'Error',
-      timestamp: new Date().toISOString(),
-      error: error.message
-    });
-  }
-});
-
-// ----------------------------------------------------------------
 // Démarrage serveur
 // ----------------------------------------------------------------
 const PORT = process.env.PORT || 5005;
 
 const startServer = async () => {
   try {
-    // ✅ Test des connexions aux bases de données
-    console.log('🔌 Testing database connections...');
-    
-    // Test Prisma (Neon)
-    await prisma.$queryRaw`SELECT 1`;
-    console.log('✅ PostgreSQL Neon connected via Prisma');
-    
-    // Test Appwrite
-    try {
-      await databases.listDocuments(
-        APPWRITE_DATABASES.MAIN,
-        APPWRITE_DATABASES.COLLECTIONS.COMPANIES,
-        [Query.limit(1)]
-      );
-      console.log('✅ Appwrite connected');
-    } catch (error) {
-      console.warn('⚠️ Appwrite connection issue (check configuration):', error.message);
-    }
-    
-    // ✅ Seed companies si vide (Prisma)
+    // ✅ Seed companies si vide
     const count = await prisma.company.count();
     if (count === 0) {
       await prisma.company.createMany({
@@ -354,36 +171,17 @@ const startServer = async () => {
           },
         ],
       });
-      console.log('✅ Seeded companies in PostgreSQL');
+      console.log('Seeded companies');
     }
 
-    app.listen(PORT, () => {
-      console.log(`✅ Server running on port ${PORT}`);
-      console.log(`📊 PostgreSQL Neon: Connected`);
-      console.log(`☁️ Appwrite: Configured`);
-      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    });
+    app.listen(PORT, () =>
+      console.log(`✅ Server running on port ${PORT} (Railway ready)`)
+    );
 
   } catch (error) {
-    console.error('❌ Failed to start the server:', error);
+    console.error('Failed to start the server:', error);
     process.exit(1);
   }
 };
 
-// Gestion propre de la fermeture
-process.on('SIGINT', async () => {
-  console.log('🛑 Shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  console.log('🛑 Shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
 startServer();
-
-// Export pour les tests
-export { app, prisma };
