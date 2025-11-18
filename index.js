@@ -1,59 +1,58 @@
 const { Client } = require('pg');
 
-module.exports = async ({ req, res, log, error }) => {
-  try {
-    log("🔗 Connexion à PostgreSQL Neon pour Africanut...");
+module.exports = async (context) => {
+  const { req, res, log, error } = context;
 
+  try {
+    log("🚀 Démarrage de la fonction Africanut PostgreSQL API");
+
+    // Vérifier la variable d'environnement
+    if (!process.env.PG_URI) {
+      throw new Error("La variable PG_URI est requise");
+    }
+
+    log("🔗 Connexion à la base de données...");
+    
     const client = new Client({
       connectionString: process.env.PG_URI,
       ssl: { rejectUnauthorized: false }
     });
 
     await client.connect();
-    log("✅ Connecté à PostgreSQL");
+    log("✅ Connecté à PostgreSQL avec succès");
 
-    // Selon la méthode HTTP, exécuter différentes actions
-    const method = req.method || 'GET';
-    
-    switch (method) {
-      case 'GET':
-        const companies = await client.query('SELECT id, name, slug, sector FROM "Company" ORDER BY name LIMIT 10;');
-        await client.end();
-        
-        return res.json({
-          success: true,
-          data: companies.rows,
-          count: companies.rows.length
-        });
+    // Test de base avec version PostgreSQL
+    const versionResult = await client.query('SELECT version();');
+    log(`📊 PostgreSQL: ${versionResult.rows[0].version.split(',')[0]}`);
 
-      case 'POST':
-        // Exemple pour créer une nouvelle entrée
-        const { name, sector } = JSON.parse(req.body || '{}');
-        
-        if (!name || !sector) {
-          await client.end();
-          return res.json({ error: "Nom et secteur requis" }, 400);
-        }
-        
-        const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const newCompany = await client.query(
-          'INSERT INTO "Company" (id, slug, name, sector, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *',
-          [require('crypto').randomUUID(), slug, name, sector]
-        );
-        
-        await client.end();
-        return res.json({ success: true, company: newCompany.rows[0] });
+    // Récupérer les entreprises Africanut
+    const companiesResult = await client.query(`
+      SELECT id, name, slug, sector, tagline 
+      FROM "Company" 
+      ORDER BY "createdAt" DESC 
+      LIMIT 10
+    `);
 
-      default:
-        await client.end();
-        return res.json({ error: "Méthode non supportée" }, 405);
-    }
+    await client.end();
+    log("📈 Données récupérées avec succès");
+
+    return res.json({
+      success: true,
+      message: "API Africanut PostgreSQL",
+      database: "PostgreSQL Neon",
+      companies_count: companiesResult.rows.length,
+      companies: companiesResult.rows,
+      timestamp: new Date().toISOString()
+    });
 
   } catch (err) {
-    error("❌ Erreur:", err);
+    error("❌ Erreur:", err.message);
+    
     return res.json({
       success: false,
-      error: err.message
+      error: err.message,
+      details: "Vérifiez la connexion à la base de données",
+      timestamp: new Date().toISOString()
     }, 500);
   }
 };
